@@ -1,0 +1,407 @@
+---
+title: "Homework 2: PCA for Image Compression"
+author: "Chris Franco"
+output:
+  html_document:
+    self_contained: true
+    toc: true
+    toc_float: true
+knit: (function(input, ...) {
+  rmarkdown::render(input, knit_root_dir = normalizePath(file.path(dirname(input), "..")))
+  })
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE)
+library(readr)
+```
+
+## The compression function
+
+```{r}
+pca_compress <- function(X, k) {
+  X <- as.matrix(X)
+  e <- eigen(crossprod(X), symmetric = TRUE)  # V = X'X = U Lambda U'
+  U <- e$vectors
+  Z <- X %*% U                                # PC scores
+  Xk <- Z[, 1:k, drop = FALSE] %*% t(U[, 1:k, drop = FALSE])
+  err <- norm(X - Xk, type = "F")             # Frobenius norm
+  list(approx = Xk, error = err)
+}
+```
+
+```{r}
+x <- data.matrix(read_csv("data/image1.csv"))
+dim(x)
+pca_compress(x, 100)$error
+```
+
+## Setup
+
+These helper functions are used for every image below. `plot_img()` draws a matrix
+as an upright grayscale image, and `pca_parts()` does the eigendecomposition once
+so that every rank-$k$ approximation and every error can be computed from the
+stored pieces.
+
+```{r}
+plot_img <- function(M, main = "", rng = range(M)) {
+  M <- pmin(pmax(M, rng[1]), rng[2])
+  image(t(M[nrow(M):1, ]), col = gray.colors(256), axes = FALSE, main = main,
+        asp = nrow(M) / ncol(M), zlim = rng)
+}
+
+pca_parts <- function(X) {
+  X <- as.matrix(X)
+  e <- eigen(crossprod(X), symmetric = TRUE)
+  U <- e$vectors
+  s <- sign(colSums(U)); s[s == 0] <- 1   # eigenvector signs are arbitrary
+  U <- sweep(U, 2, s, "*")
+  Z <- X %*% U
+  lambda <- pmax(e$values, 0)
+  err <- sqrt(pmax(sum(lambda) - cumsum(lambda), 0))
+  list(X = X, U = U, Z = Z, lambda = lambda, error = err)
+}
+
+approx_k <- function(P, k) {
+  P$Z[, 1:k, drop = FALSE] %*% t(P$U[, 1:k, drop = FALSE])
+}
+```
+
+## Image 1
+
+```{r}
+P1 <- pca_parts(x)
+n1 <- nrow(x); p1 <- ncol(x); rng1 <- range(x)
+round(P1$lambda[1:5], 1)
+```
+
+### Original and rank 1–10 approximations
+
+```{r, fig.width = 10, fig.height = 9}
+par(mfrow = c(3, 4), mar = c(0.5, 0.5, 2, 0.5))
+plot_img(x, "Original", rng = rng1)
+for (k in 1:10) plot_img(approx_k(P1, k), paste("k =", k), rng = rng1)
+par(mfrow = c(1, 1), mar = c(5, 4, 4, 2) + 0.1)
+```
+
+### Approximation error vs. k
+
+```{r, fig.width = 7, fig.height = 5}
+plot(0:p1, c(norm(x, type = "F"), P1$error), type = "l", lwd = 2,
+     xlab = "k (rank)", ylab = "Frobenius error",
+     main = "Approximation error vs. k, image 1")
+```
+
+### First eigenvector and first PC score
+
+```{r, fig.width = 10, fig.height = 4.5}
+par(mfrow = c(1, 2))
+plot(P1$U[, 1], type = "l", lwd = 2, xlab = "Column index", ylab = "Loading",
+     main = "First eigenvector u1")
+plot(P1$Z[, 1], type = "l", lwd = 2, xlab = "Row index", ylab = "Score",
+     main = "First PC score z1")
+par(mfrow = c(1, 1))
+```
+
+
+Image 1 is a 1000 × 100 matrix of random noise with a single bright vertical
+stripe in column 78. The first eigenvalue is about 399,100 while the remaining
+99 are all close to 1,600, which tells us before plotting anything that one
+component captures the stripe and the rest of the image has no preferred pattern.
+
+The first eigenvector is essentially zero for every column except column 78,
+where it spikes to 1. The first principal component therefore corresponds to a
+single column of the image: the stripe. The first PC score is close to 20 for all
+1,000 rows, which is the brightness of the stripe in each row, and the rapid
+oscillation around that value is random noise rather than structure. Multiplying
+them gives a matrix that is near zero everywhere except column 78, which is
+exactly what the rank 1 approximation looks like.
+
+The error curve shows one large drop and then a slow, nearly linear decline. Going
+from k = 0 to k = 1 cuts the error from 705 to 314, since the stripe accounts for
+about 80% of the squared magnitude of the image. After that, each additional
+component removes only three or four units of error, because every remaining
+component is fitting noise and no one of them is more useful than another. This
+is the opposite of the sharp elbow seen in image 3.
+
+**My choice: k = 1.** The stripe is the only real structure in this image, and the
+first component captures it completely. The rank 1 approximation is actually
+*cleaner* than the original, since it discards the noise, and larger values of k
+reduce the Frobenius error only by adding that noise back in. This image is a
+useful reminder that PCA compresses structure, not noise.
+
+
+## Image 2
+
+```{r}
+x2 <- data.matrix(read_csv("data/image2.csv"))
+P2 <- pca_parts(x2)
+n2 <- nrow(x2); p2 <- ncol(x2); rng2 <- range(x2)
+dim(x2)
+round(P2$lambda[1:5], 1)
+```
+
+The eigenvalues are striking: the first is about 1.4 billion, the second is 4.2,
+and every one after that is exactly zero. Zero eigenvalues mean those components
+contribute nothing at all, so this matrix is essentially rank 1. Every one of its
+1,000 rows is a scaled copy of a single pattern.
+
+### Original and rank 1–10 approximations
+
+```{r, fig.width = 10, fig.height = 9}
+par(mfrow = c(3, 4), mar = c(0.5, 0.5, 2, 0.5))
+plot_img(x2, "Original", rng = rng2)
+for (k in 1:10) plot_img(approx_k(P2, k), paste("k =", k), rng = rng2)
+par(mfrow = c(1, 1), mar = c(5, 4, 4, 2) + 0.1)
+```
+
+All eleven panels are indistinguishable, because the rank 1 approximation already
+reproduces the image. Its Frobenius error is 2.05 against a total magnitude of
+37,539, or about 0.005%.
+
+### Approximation error vs. k
+
+```{r, fig.width = 7, fig.height = 5}
+plot(0:p2, c(norm(x2, type = "F"), P2$error), type = "l", lwd = 2,
+     col = "#A71930",
+     xlab = "k (rank)", ylab = "Frobenius error",
+     main = "Approximation error vs. k, image 2")
+```
+
+### First eigenvector and first PC score
+
+```{r, fig.width = 10, fig.height = 4.5}
+par(mfrow = c(1, 2))
+plot(P2$U[, 1], type = "l", lwd = 2, xlab = "Column index", ylab = "Loading",
+     main = "First eigenvector u1, image 2")
+plot(P2$Z[, 1], type = "l", lwd = 2, xlab = "Row index", ylab = "Score",
+     main = "First PC score z1, image 2")
+par(mfrow = c(1, 1))
+```
+
+The first eigenvector rises steadily from 0 at column 1 to about 0.17 at column
+100, so the single pattern underlying this image is a left-to-right brightness
+gradient. The first PC score varies between roughly −4,000 and +3,500 with no
+trend down the image, and it gives each row's multiple of that gradient. Rows with
+large positive scores show the gradient as it is, rows with large negative scores
+show it reversed (bright on the left, dark on the right), and rows near zero are
+nearly uniform. This is what produces the horizontal banding in the original.
+
+Plotting a few rows directly makes the structure obvious:
+
+```{r, fig.width = 7, fig.height = 5}
+matplot(t(x2[1:5, ]), type = "l", lwd = 2, lty = 1,
+        xlab = "Column index", ylab = "Pixel value",
+        main = "First 5 rows of image 2")
+```
+
+Each row is a straight line through the origin with its own slope. They differ
+only by a scale factor, which is precisely what it means for the matrix to be
+rank 1.
+
+**My choice: k = 1.** The rank 1 approximation is visually identical to the
+original and has a relative error of about 0.005%. It stores 1,100 numbers instead
+of 100,000, roughly 1% of the original. This is the best case for PCA compression,
+because the image genuinely contains only one pattern. It stands in contrast to
+image 1, where k = 1 is also the right answer but for the opposite reason: there,
+everything beyond the first component is noise worth discarding, while here there
+is simply nothing beyond the first component at all.
+
+
+## Image 3
+
+```{r}
+x3 <- data.matrix(read_csv("data/image3.csv"))
+P3 <- pca_parts(x3)
+n3 <- nrow(x3); p3 <- ncol(x3); rng3 <- range(x3)
+dim(x3)
+round(P3$lambda[1:10])
+```
+
+Image 3 is a photograph of a puppy, and its eigenvalues behave like a real image:
+they decline smoothly from 80,137 rather than collapsing to zero. The pixel values
+have been standardized to mean 0 and standard deviation 1, so dark pixels are
+negative and light pixels are positive.
+
+### Original and rank 1–10 approximations
+
+```{r, fig.width = 10, fig.height = 9}
+par(mfrow = c(3, 4), mar = c(0.5, 0.5, 2, 0.5))
+plot_img(x3, "Original", rng = rng3)
+for (k in 1:10) plot_img(approx_k(P3, k), paste("k =", k), rng = rng3)
+par(mfrow = c(1, 1), mar = c(5, 4, 4, 2) + 0.1)
+```
+
+Here the approximations visibly improve. At k = 1 there is only a dark band across
+the middle. The white chest and paw appear by k = 3, the shape is clearly a dog by
+k = 5, and the face, ear and snout are defined by k = 10. The blocky vertical
+streaking at low k is characteristic of PCA on images, since each component is a
+pattern spanning the full width of the frame.
+
+### Approximation error vs. k
+
+```{r, fig.width = 7, fig.height = 5}
+plot(0:p3, c(norm(x3, type = "F"), P3$error), type = "l", lwd = 2,
+     col = "#A71930",
+     xlab = "k (rank)", ylab = "Frobenius error",
+     main = "Approximation error vs. k, image 3")
+```
+
+This is the classic shape for a compressible image: a steep drop over the first
+ten or so components, then a long flat tail. It contrasts with image 1, where the
+decline was nearly linear, and with image 2, where the curve fell to zero at k = 1
+and stayed there.
+
+### First eigenvector and first PC score
+
+```{r, fig.width = 10, fig.height = 4.5}
+par(mfrow = c(1, 2))
+plot(P3$U[, 1], type = "l", lwd = 2, xlab = "Column index", ylab = "Loading",
+     main = "First eigenvector u1, image 3")
+plot(P3$Z[, 1], type = "l", lwd = 2, xlab = "Row index", ylab = "Score",
+     main = "First PC score z1, image 3")
+par(mfrow = c(1, 1))
+```
+
+The first eigenvector is positive for all 345 columns but varies in size. It is
+small (around 0.02) for columns 1 to 90, which contain mostly flat background, and
+much larger (0.05 to 0.08) for columns 90 to 300, which contain the puppy. The
+first component therefore emphasizes the part of the frame where the strongest
+light–dark contrast occurs. The first PC score gives each row's weight on that
+pattern: it is positive near the top and bottom, where the rows are mostly light
+blanket, and drops to about −28 around rows 100 to 150, where the rows pass through
+the puppy's dark head and body. Because the values are standardized, a negative
+score means the row is darker than average. The rank 1 approximation is therefore
+a coarse map of where the dark subject sits against the light background, which is
+exactly the blurred band seen in the k = 1 panel.
+
+### Choosing k
+
+```{r}
+rel3 <- P3$error / norm(x3, type = "F")
+for (k in c(10, 20, 30, 40, 50, 90)) {
+  cat("k =", k, " rel error =", round(rel3[k], 3),
+      " storage =", round(100 * k * (n3 + p3) / (n3 * p3), 1), "%\n")
+}
+```
+
+```{r, fig.width = 10, fig.height = 4}
+par(mfrow = c(1, 4), mar = c(0.5, 0.5, 2, 0.5))
+plot_img(x3, "Original", rng = rng3)
+for (k in c(20, 30, 50)) plot_img(approx_k(P3, k), paste("k =", k), rng = rng3)
+par(mfrow = c(1, 1), mar = c(5, 4, 4, 2) + 0.1)
+```
+
+**My choice: k = 30.** The image is recognizable by k = 6 and detailed by k = 20,
+and at k = 30 it is hard to distinguish from the original at normal viewing size
+while using only 16.7% of the original storage. The Frobenius criterion is much
+stricter: reaching 5% relative error takes k = 90, which costs 50% of the original
+storage and halves the benefit of compressing at all. That remaining error sits in
+fine blanket texture and image noise, which contribute to the squared error but are
+not visually important, so I chose the smaller k based on appearance rather than on
+the error metric alone.
+
+
+## Image 4
+
+```{r}
+x4 <- data.matrix(read_csv("data/image4.csv"))
+P4 <- pca_parts(x4)
+n4 <- nrow(x4); p4 <- ncol(x4); rng4 <- range(x4)
+dim(x4)
+```
+
+Image 4 is a 213 × 119 photograph of a blurry outdoor scene containing a few
+bright objects. Like image 3, its values are standardized. It is much smaller than
+the other images, which turns out to matter for how well PCA compresses it.
+
+### Original and rank 1–10 approximations
+
+```{r, fig.width = 10, fig.height = 9}
+par(mfrow = c(3, 4), mar = c(0.5, 0.5, 2, 0.5))
+plot_img(x4, "Original", rng = rng4)
+for (k in 1:10) plot_img(approx_k(P4, k), paste("k =", k), rng = rng4)
+par(mfrow = c(1, 1), mar = c(5, 4, 4, 2) + 0.1)
+```
+
+The bright objects appear almost immediately: the white rectangle near row 150 and
+the bright spots near row 60 are visible even at k = 1. The textured background,
+however, stays blurred and streaked through k = 10. Compared with image 3, which
+looked nearly clean by then, this image has less large-scale structure for the
+early components to capture.
+
+### Approximation error vs. k
+
+```{r, fig.width = 7, fig.height = 5}
+plot(0:p4, c(norm(x4, type = "F"), P4$error), type = "l", lwd = 2,
+     col = "#A71930",
+     xlab = "k (rank)", ylab = "Frobenius error",
+     main = "Approximation error vs. k, image 4")
+```
+
+### First eigenvector and first PC score
+
+```{r, fig.width = 10, fig.height = 4.5}
+par(mfrow = c(1, 2))
+plot(P4$U[, 1], type = "l", lwd = 2, xlab = "Column index", ylab = "Loading",
+     main = "First eigenvector u1, image 4")
+plot(P4$Z[, 1], type = "l", lwd = 2, xlab = "Row index", ylab = "Score",
+     main = "First PC score z1, image 4")
+par(mfrow = c(1, 1))
+```
+
+The first eigenvector peaks sharply at about 0.22 near column 85 and dips slightly
+negative near columns 30 to 45. Unlike the earlier images, where the first
+eigenvector was positive throughout, this pattern contrasts two regions: brightness
+concentrated around column 85 against a relatively darker region near column 35.
+The first PC score peaks at about 10 near row 60 and about 22 near row 150, which
+are the rows containing the bright objects, and is negative around rows 30 to 50
+and near the bottom of the image. The first component is therefore acting as a
+detector for the brightest features in the frame rather than describing the scene
+as a whole, which is why the k = 1 approximation shows little more than bright
+patches against a flat background.
+
+### Choosing k
+
+```{r}
+rel4 <- P4$error / norm(x4, type = "F")
+for (k in c(10, 20, 30, 40, 50)) {
+  cat("k =", k, " rel error =", round(rel4[k], 3),
+      " storage =", round(100 * k * (n4 + p4) / (n4 * p4), 1), "%\n")
+}
+```
+
+```{r, fig.width = 10, fig.height = 4}
+par(mfrow = c(1, 4), mar = c(0.5, 0.5, 2, 0.5))
+plot_img(x4, "Original", rng = rng4)
+for (k in c(20, 25, 30)) plot_img(approx_k(P4, k), paste("k =", k), rng = rng4)
+par(mfrow = c(1, 1), mar = c(5, 4, 4, 2) + 0.1)
+```
+
+**My choice: k = 20.** The scene reads as coherent by about k = 20, and since the
+original is already blurry there is little fine detail to recover beyond that. The
+more important consideration here is that compression works poorly on an image
+this small. Storage cost is k(n + p) / np, and with n + p = 332 against np = 25,347
+each component costs about 1.3% of the original. At k = 20 the approximation
+already uses 26% of the original storage, and k = 40 uses 52%. Image 3, which is
+larger and squarer, reached a similar visual quality at 16.7%. I would accept 13%
+relative error at k = 20 rather than spend half the original file size for a
+difference that is barely visible.
+
+## Summary
+
+| Image | Size | Chosen k | Relative error | Storage |
+|-------|------|----------|----------------|---------|
+| 1 | 1000 × 100 | 1 | 44.5% | 1.1% |
+| 2 | 1000 × 100 | 1 | 0.005% | 1.1% |
+| 3 | 376 × 345 | 30 | 10.6% | 16.7% |
+| 4 | 213 × 119 | 20 | 13.3% | 26.2% |
+
+How well PCA compresses an image depends entirely on whether the image has
+structure that a small number of patterns can describe. Image 2 is genuinely rank
+1 and compresses perfectly. Image 1 has one real feature and 99 dimensions of
+noise, so k = 1 captures everything meaningful and no larger k improves the
+picture, even though its relative error stays at 44.5%. Images 3 and 4 are real
+photographs that need tens of components, and image 4 shows that a small image
+compresses poorly regardless of its content, because each component costs
+proportionally more to store.
